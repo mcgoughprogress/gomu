@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/tools/go/ast/astutil"
@@ -19,6 +20,14 @@ import (
 // OverlayMutator manages overlay-based mutation without modifying original files.
 type OverlayMutator struct {
 	baseDir string
+
+	// seq hands each PrepareMutation call a private directory name. Mutant IDs
+	// are not unique -- GenerateMutants numbers them by the length of the kept
+	// slice, so every type-check rejection makes the next mutant reuse an index
+	// -- and two mutants sharing a directory overwrite each other's mutated
+	// source and overlay.json, while whichever finishes first deletes the
+	// directory out from under the other.
+	seq atomic.Uint64
 }
 
 // OverlayConfig represents the JSON structure for go build/test -overlay option.
@@ -50,7 +59,7 @@ func NewOverlayMutator() (*OverlayMutator, error) {
 // PrepareMutation prepares the mutation execution by creating mutated file and overlay.json.
 func (om *OverlayMutator) PrepareMutation(mutant mutation.Mutant) (*MutationContext, error) {
 	// Create unique directory for this mutant
-	mutantDir := filepath.Join(om.baseDir, fmt.Sprintf("mutant_%s", mutant.ID))
+	mutantDir := filepath.Join(om.baseDir, fmt.Sprintf("mutant_%d", om.seq.Add(1)))
 	if err := os.MkdirAll(mutantDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create mutant directory: %w", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -673,6 +674,86 @@ func TestMultipleMutationsOnSameFile(t *testing.T) {
 	originalContent, _ := os.ReadFile(filepath.Join(tempDir, "calc.go"))
 	if !strings.Contains(string(originalContent), "a + b") {
 		t.Error("original file should still contain 'a + b'")
+	}
+}
+
+// TestConcurrentMutationsWithDuplicateIDs verifies that mutants sharing an ID
+// are still prepared in isolation. GenerateMutants numbers mutants by the
+// length of the kept slice, so every type-check rejection makes the next mutant
+// reuse an index; mutants that share a directory overwrite each other's mutated
+// source and overlay.json, and whichever finishes first deletes the directory
+// out from under the other.
+func TestConcurrentMutationsWithDuplicateIDs(t *testing.T) {
+	t.Parallel()
+
+	tempDir := createOverlayTestProject(t)
+
+	mutator, err := NewOverlayMutator()
+	if err != nil {
+		t.Fatalf("failed to create mutator: %v", err)
+	}
+
+	defer mutator.Cleanup()
+
+	operators := []string{"-", "*", "/", "%"}
+
+	contexts := make([]*MutationContext, len(operators))
+	errs := make([]error, len(operators))
+
+	var wg sync.WaitGroup
+
+	for i, operator := range operators {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			contexts[i], errs[i] = mutator.PrepareMutation(mutation.Mutant{
+				ID:       "duplicate-id",
+				Type:     "arithmetic_binary",
+				FilePath: filepath.Join(tempDir, "calc.go"),
+				Line:     4,
+				Column:   9,
+				Original: "+",
+				Mutated:  operator,
+			})
+		}()
+	}
+
+	wg.Wait()
+
+	defer func() {
+		for _, ctx := range contexts {
+			mutator.CleanupMutation(ctx)
+		}
+	}()
+
+	seenDirs := make(map[string]int, len(operators))
+
+	for i, operator := range operators {
+		if errs[i] != nil {
+			t.Fatalf("mutation %q failed to prepare: %v", operator, errs[i])
+		}
+
+		if previous, seen := seenDirs[contexts[i].MutantDir]; seen {
+			t.Errorf("mutations %q and %q share directory %s", operators[previous], operator, contexts[i].MutantDir)
+
+			continue
+		}
+
+		seenDirs[contexts[i].MutantDir] = i
+
+		mutatedContent, err := os.ReadFile(contexts[i].MutatedPath)
+		if err != nil {
+			t.Errorf("failed to read mutated file for %q: %v", operator, err)
+
+			continue
+		}
+
+		want := "a " + operator + " b"
+		if !strings.Contains(string(mutatedContent), want) {
+			t.Errorf("expected mutated file for %q to contain %q, got: %s", operator, want, string(mutatedContent))
+		}
 	}
 }
 
