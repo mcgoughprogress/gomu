@@ -21,12 +21,11 @@ import (
 type OverlayMutator struct {
 	baseDir string
 
-	// seq hands each PrepareMutation call a private directory name. Mutant IDs
-	// are not unique -- GenerateMutants numbers them by the length of the kept
-	// slice, so every type-check rejection makes the next mutant reuse an index
-	// -- and two mutants sharing a directory overwrite each other's mutated
-	// source and overlay.json, while whichever finishes first deletes the
-	// directory out from under the other.
+	// seq hands each PrepareMutation call a private directory name. The name is
+	// deliberately not derived from mutant.ID: two mutants sharing a directory
+	// overwrite each other's mutated source and overlay.json, and whichever
+	// finishes first deletes the directory out from under the other, so
+	// isolation must not depend on an identifier owned by another package.
 	seq atomic.Uint64
 }
 
