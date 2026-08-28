@@ -207,6 +207,67 @@ func LogicalTest(a, b bool) bool {
 	}
 }
 
+// TestGenerateMutants_UniqueIDs verifies that every generated mutant gets its
+// own ID. Several mutators fire on the same node, so a file this small already
+// produces enough mutants for a numbering mistake to repeat a value.
+func TestGenerateMutants_UniqueIDs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test\n\ngo 1.24\n"), 0600); err != nil {
+		t.Fatalf("Failed to write go.mod: %v", err)
+	}
+
+	testFile := filepath.Join(tmpDir, "test.go")
+
+	testCode := `package main
+
+func IsZero(n int) bool {
+	if n == 0 {
+		return true
+	}
+
+	return false
+}
+
+func Join(a, b string) string {
+	return a + b
+}
+`
+
+	if err := os.WriteFile(testFile, []byte(testCode), 0600); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	engine, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create mutation engine: %v", err)
+	}
+
+	mutants, err := engine.GenerateMutants(testFile)
+	if err != nil {
+		t.Fatalf("Failed to generate mutants: %v", err)
+	}
+
+	if len(mutants) == 0 {
+		t.Fatal("Expected mutants to be generated, got 0")
+	}
+
+	seen := make(map[string]Mutant, len(mutants))
+
+	for _, mutant := range mutants {
+		if previous, ok := seen[mutant.ID]; ok {
+			t.Errorf("duplicate mutant ID %s: %s:%d:%d %q->%q and %s:%d:%d %q->%q",
+				mutant.ID,
+				previous.FilePath, previous.Line, previous.Column, previous.Original, previous.Mutated,
+				mutant.FilePath, mutant.Line, mutant.Column, mutant.Original, mutant.Mutated)
+
+			continue
+		}
+
+		seen[mutant.ID] = mutant
+	}
+}
+
 func TestGenerateMutants_MutationLimit(t *testing.T) {
 	// Create temporary Go file with many operations
 	tmpDir := t.TempDir()

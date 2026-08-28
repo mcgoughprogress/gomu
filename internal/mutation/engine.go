@@ -18,6 +18,7 @@ type Engine struct {
 
 // Mutant represents a single mutation.
 type Mutant struct {
+	// ID uniquely identifies the mutant among the mutants generated for its file.
 	ID          string `json:"id"`
 	FilePath    string `json:"filePath"`
 	Line        int    `json:"line"`
@@ -134,10 +135,12 @@ func (e *Engine) GenerateMutants(filePath string) ([]Mutant, error) {
 				// Filter mutants based on type information
 				for i := range mutants {
 					mutants[i].FilePath = filePath
-					mutants[i].ID = fmt.Sprintf("%s_%d", filePath, len(allMutants)+i)
 
 					// Only add mutant if it passes type check
 					if typeChecker == nil || typeChecker.IsValidMutation(node, mutants[i]) {
+						// Number from the mutants kept so far, once the mutant
+						// is known to be kept, so IDs stay unique and gapless.
+						mutants[i].ID = fmt.Sprintf("%s_%d", filePath, len(allMutants))
 						allMutants = append(allMutants, mutants[i])
 					}
 				}
